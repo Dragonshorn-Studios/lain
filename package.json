@@ -1,0 +1,20 @@
+{
+  "name": "lain",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @lain/server --filter @lain/web dev",
+    "dev:server": "pnpm --filter @lain/server dev",
+    "dev:web": "pnpm --filter @lain/web dev",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @lain/server db:generate",
+    "db:migrate": "pnpm --filter @lain/server db:migrate",
+    "lainctl": "pnpm --filter @lain/cli start"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

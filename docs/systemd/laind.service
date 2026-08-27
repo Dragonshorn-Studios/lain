@@ -1,0 +1,25 @@
+[Unit]
+Description=Lain homelab service registry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lain
+Group=lain
+WorkingDirectory=/opt/lain/apps/server
+EnvironmentFile=/etc/lain/lain.env
+Environment=LAIN_DNS_PORT=53
+Environment=LAIN_PROXY_PORT=80
+Environment=LAIN_PROXY_TLS_PORT=443
+LoadCredential=cloudflare-api-token:/etc/lain/credentials/cloudflare-api-token
+ExecStart=/usr/bin/node /opt/lain/apps/server/dist/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
