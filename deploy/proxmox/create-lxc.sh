@@ -8,6 +8,16 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly INSTALLER="${SCRIPT_DIR}/install-lain.sh"
+# The shared core lives next to this script in the launcher's temp dir and in
+# deploy/lib/ inside a checkout.
+if [[ -f "${SCRIPT_DIR}/install-core.sh" ]]; then
+  CORE_INSTALLER="${SCRIPT_DIR}/install-core.sh"
+elif [[ -f "${SCRIPT_DIR}/../lib/install-core.sh" ]]; then
+  CORE_INSTALLER="${SCRIPT_DIR}/../lib/install-core.sh"
+else
+  CORE_INSTALLER="${SCRIPT_DIR}/install-core.sh"
+fi
+readonly CORE_INSTALLER
 
 REPO_REF="${REPO_REF:-main}"
 CT_ID="${CT_ID:-}"
@@ -57,6 +67,7 @@ trap on_error ERR
 [[ ${EUID} -eq 0 ]] || fail "run this script as root on the Proxmox VE host"
 for command in pct pveam pvesh awk grep sort stat tail; do need "$command"; done
 [[ -f "$INSTALLER" ]] || fail "missing sibling installer: $INSTALLER"
+[[ -f "$CORE_INSTALLER" ]] || fail "missing sibling core installer: $CORE_INSTALLER"
 valid_ref "$REPO_REF" || fail "REPO_REF contains unsupported characters"
 if [[ "$IP_CIDR" =~ ^(.+)/([0-9]|[12][0-9]|3[0-2])$ ]]; then
   valid_ipv4 "${BASH_REMATCH[1]}" || fail "IP_CIDR must look like 192.168.1.20/24"
@@ -112,6 +123,7 @@ for attempt in $(seq 1 60); do
   sleep 2
 done
 
+pct push "$CT_ID" "$CORE_INSTALLER" /root/install-core.sh --perms 0700
 pct push "$CT_ID" "$INSTALLER" /root/install-lain.sh --perms 0700
 dns_address="${IP_CIDR%/*}"
 pct exec "$CT_ID" -- /usr/bin/env \

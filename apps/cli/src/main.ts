@@ -2,6 +2,7 @@
 import type { ServiceWithStatus } from "@lain/shared";
 import { interactiveLogin, keychainAccount, keychainStore, type SecretStore } from "./auth.js";
 import { setupHelp, setupUbuntu } from "./setup.js";
+import { cliVersion, installedVersion, update } from "./update.js";
 
 const baseUrl = process.env.LAIN_URL ?? "http://localhost:3100";
 const [command = "help", subject, ...rest] = process.argv.slice(2);
@@ -103,7 +104,9 @@ async function authLogout(): Promise<void> {
 }
 
 try {
-  if (command === "status") {
+  if (command === "--version" || command === "version") {
+    console.log(cliVersion());
+  } else if (command === "status") {
     const health = await request<{ status: string; adapterMode: string }>("/api/health");
     await ensureApiKey({ interactive: false });
     let services: ServiceWithStatus[] | undefined;
@@ -112,8 +115,12 @@ try {
       catch (error) { console.error(`Could not list services: ${error instanceof Error ? error.message : error}`); process.exitCode = 1; }
     }
     console.log(`laind: ${health.status} (${health.adapterMode} adapters)`);
+    const installed = installedVersion();
+    if (installed) console.log(`installed release: ${installed} (${cliVersion()} running)`);
     if (services) console.log(`services: ${services.length}, healthy: ${services.filter((service) => service.status.healthy).length}`);
     else if (process.exitCode !== 1) console.log("services: set LAIN_API_KEY or run `lainctl auth login` to inspect services");
+  } else if (command === "update") {
+    await update([subject, ...rest].filter((entry): entry is string => Boolean(entry)));
   } else if (command === "services" || (command === "service" && subject === "list")) {
     await ensureApiKey({ interactive: true });
     const services = await request<ServiceWithStatus[]>("/api/services");
@@ -168,9 +175,11 @@ Usage:
   lainctl status
   lainctl services
   lainctl reconcile [service-id]
+  lainctl update [--version vX.Y.Z] [--yes]
   lainctl keys create <name> | list | revoke <key-id>
   lainctl auth status | login | logout
   lainctl setup ubuntu [options]
+  lainctl --version
 
 Authentication:
   Commands that change anything need an API key. lainctl uses LAIN_API_KEY, or

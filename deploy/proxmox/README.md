@@ -104,6 +104,6 @@ pct exec 220 -- bash -lc 'cd /opt/lain && pnpm install --frozen-lockfile && pnpm
 pct exec 220 -- systemctl restart laind
 ```
 
-An installation pinned to a commit SHA is intentionally detached and should be updated by fetching and checking out another reviewed commit instead of using `git pull`.
+An installation pinned to a commit SHA is intentionally detached and should be updated by fetching and checking out another reviewed commit instead of using `git pull`. The guest installer shares its installation core (`deploy/lib/install-core.sh`) with the bare-Ubuntu installer, whose versioned-release updates are described in [`deploy/ubuntu/README.md`](../ubuntu/README.md).
 
 Back up the container with normal Proxmox backup tooling. The important persistent state is `/var/lib/lain`, `/etc/lain`, and `/opt/lain`.

@@ -23,6 +23,10 @@ Tags are immutable: never move or delete a published tag. Fix forward with a new
 sha256sum --check --strict SHA256SUMS
 ```
 
+## Installing updates
+
+`lainctl update` consumes these releases directly: it downloads `lain-<version>.tar.gz` and `SHA256SUMS` from the GitHub release, verifies the checksum, builds the new release beside the running one under `/opt/lain/releases`, backs up the database, switches `/opt/lain/current`, restarts `laind`, and rolls back automatically when the health gate fails. This requires the repository to be public and the release to be published. Versioned installs are created by [`deploy/ubuntu/install.sh`](../deploy/ubuntu/install.sh); see [`deploy/ubuntu/README.md`](../deploy/ubuntu/README.md).
+
 ## Installing from a release
 
 The deployment launcher accepts a `REPO_REF` naming any branch, tag, or reviewed commit. Production installs should pin a release tag instead of `main`:

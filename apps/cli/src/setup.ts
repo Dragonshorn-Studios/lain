@@ -102,6 +102,12 @@ function upsertEnvironment(current: string, values: Record<string, string | unde
 }
 
 function repositoryRoot(): string {
+  // Versioned installs run lainctl from /opt/lain/releases/<v> but the
+  // generated unit must pin /opt/lain/current so updates only need a symlink
+  // switch; LAIN_INSTALL_ROOT provides that canonical path and skips
+  // realpathSync so the symlink is preserved in the unit.
+  const override = process.env.LAIN_INSTALL_ROOT;
+  if (override) return resolve(override);
   const candidate = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   return realpathSync(candidate);
 }
@@ -144,7 +150,7 @@ ProtectHome=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectSystem=strict
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
@@ -188,7 +194,7 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/lain
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

@@ -13,10 +13,10 @@ fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 deploy_dir="$repo_root/deploy/proxmox"
 
-required=(install.sh create-lxc.sh install-lain.sh README.md)
-printf 'Checking the deployment manifest in deploy/proxmox...\n'
+required=(deploy/proxmox/install.sh deploy/proxmox/create-lxc.sh deploy/proxmox/install-lain.sh deploy/lib/install-core.sh deploy/proxmox/README.md)
+printf 'Checking the deployment manifest...\n'
 for entry in "${required[@]}"; do
-  [[ -s "$deploy_dir/$entry" ]] || fail "required deployment file is missing or empty: deploy/proxmox/$entry"
+  [[ -s "$repo_root/$entry" ]] || fail "required deployment file is missing or empty: $entry"
 done
 printf 'OK: %s\n' "${required[*]}"
 

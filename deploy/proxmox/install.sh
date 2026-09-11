@@ -145,6 +145,11 @@ if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
 fi
 creator="${launcher_dir:+${launcher_dir}/create-lxc.sh}"
 guest_installer="${launcher_dir:+${launcher_dir}/install-lain.sh}"
+core_installer=""
+if [[ -n "$launcher_dir" ]]; then
+  if [[ -f "${launcher_dir}/install-core.sh" ]]; then core_installer="${launcher_dir}/install-core.sh";
+  elif [[ -f "${launcher_dir}/../lib/install-core.sh" ]]; then core_installer="${launcher_dir}/../lib/install-core.sh"; fi
+fi
 
 if [[ ! -f "$creator" || ! -f "$guest_installer" ]]; then
   command -v curl >/dev/null 2>&1 || fail "curl is required when running the remote launcher"
@@ -154,25 +159,31 @@ if [[ ! -f "$creator" || ! -f "$guest_installer" ]]; then
     https://github.com/*)
       path="${repository_base#https://github.com/}"
       raw_base="https://raw.githubusercontent.com/${path}/${REPO_REF}/deploy/proxmox"
+      raw_lib_base="https://raw.githubusercontent.com/${path}/${REPO_REF}/deploy/lib"
       ;;
     https://gitlab.com/*)
       raw_base="${repository_base}/-/raw/${REPO_REF}/deploy/proxmox"
+      raw_lib_base="${repository_base}/-/raw/${REPO_REF}/deploy/lib"
       ;;
     *) fail "the remote launcher currently supports github.com and gitlab.com repositories" ;;
   esac
   printf 'Downloading the reviewed deployment components from %s...\n' "$REPO_REF"
   curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 "$raw_base/create-lxc.sh" --output "$temporary_directory/create-lxc.sh"
   curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 "$raw_base/install-lain.sh" --output "$temporary_directory/install-lain.sh"
-  chmod 0700 "$temporary_directory/create-lxc.sh" "$temporary_directory/install-lain.sh"
+  curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 "$raw_lib_base/install-core.sh" --output "$temporary_directory/install-core.sh"
+  chmod 0700 "$temporary_directory/create-lxc.sh" "$temporary_directory/install-lain.sh" "$temporary_directory/install-core.sh"
   creator="$temporary_directory/create-lxc.sh"
   guest_installer="$temporary_directory/install-lain.sh"
+  core_installer="$temporary_directory/install-core.sh"
 fi
 
 if [[ "$dry_run" == 1 ]]; then
+  [[ -n "$core_installer" && -f "$core_installer" ]] || fail "the shared core installer is missing; expected install-core.sh beside the launcher or in ../lib"
   bash -n "$creator" || fail "syntax check failed for the launcher component: $creator"
   bash -n "$guest_installer" || fail "syntax check failed for the installer component: $guest_installer"
-  printf 'Dry run passed. Every deployment component resolved from %s (ref %s):\n  %s\n  %s\n' \
-    "$SOURCE_REPOSITORY" "$REPO_REF" "$creator" "$guest_installer"
+  bash -n "$core_installer" || fail "syntax check failed for the core installer: $core_installer"
+  printf 'Dry run passed. Every deployment component resolved from %s (ref %s):\n  %s\n  %s\n  %s\n' \
+    "$SOURCE_REPOSITORY" "$REPO_REF" "$creator" "$guest_installer" "$core_installer"
   exit 0
 fi
 
