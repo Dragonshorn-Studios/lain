@@ -92,7 +92,7 @@ dig @192.168.1.20 YOUR_REGISTERED_HOSTNAME
 curl -I http://YOUR_REGISTERED_HOSTNAME
 ```
 
-Then open `http://192.168.1.20:3100`. Configure your router's DHCP service to distribute `192.168.1.20` as the DNS server.
+Then open `http://192.168.1.20:3100` and complete first-run setup immediately: whoever sets the admin password first owns the dashboard. Configure your router's DHCP service to distribute `192.168.1.20` as the DNS server. For machine access, create an API key on the dashboard's *API keys* page (or run `lainctl keys create`) and export it as `LAIN_API_KEY`.
 
 ## Update or recover
 

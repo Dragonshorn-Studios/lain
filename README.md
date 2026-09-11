@@ -49,6 +49,8 @@ pnpm test                # run tests
 pnpm lainctl status
 pnpm lainctl services
 pnpm lainctl reconcile
+pnpm lainctl keys create home-ci
+pnpm lainctl auth login
 ```
 
 ### Secure host setup
@@ -118,6 +120,10 @@ pnpm --filter @lain/server start
 | `LAIN_RECONCILE_INTERVAL_MS` | `30000` | Reconciliation interval |
 | `LAIN_HEALTH_INTERVAL_MS` | `30000` | Health-check interval |
 | `LAIN_ADAPTER_MODE` | `mock` | Set to `live` to enable external mutations |
+| `LAIN_AUTH` | `session` | Set `off` to disable dashboard/API authentication (dev break-glass) |
+| `LAIN_TRUSTED_ORIGINS` | empty | Comma-separated origins allowed to call the API cross-origin |
+| `LAIN_ALLOW_UNSAFE_LIVE` | empty | Exact phrase required to run live mode with authentication disabled |
+| `LAIN_API_KEY` | empty | API key for `lainctl` and scripts (used by the CLI, not laind) |
 | `CLOUDFLARE_API_TOKEN` | empty | Scoped API token for DNS and Tunnel changes |
 | `CLOUDFLARE_ZONE_ID` | empty | Zone containing managed hostnames |
 | `CLOUDFLARE_ACCOUNT_ID` | empty | Account containing the Tunnel |
@@ -172,4 +178,22 @@ scripts  CI guard scripts
 
 ## Security notes
 
-The MVP has no authentication. Bind the API to a trusted network, place it behind an authenticated gateway, and do not expose it directly to the internet. The dashboard intentionally cannot install packages, control systemd, or receive secrets. Keep `.env`, credential source files, and the certificate directory private. Use a least-privilege Cloudflare token.
+Access control is single-admin: the dashboard uses an admin password with server-side session cookies, and machines (lainctl, scripts, CI) use API keys. Both are managed after installation.
+
+- **First-run setup**: on first open, the dashboard asks you to create the admin password. Complete it immediately — whoever sets the password first owns the dashboard. Only a scrypt hash is stored; the password never leaves the browser.
+- **API keys**: create and revoke keys on the dashboard's *API keys* page or with `lainctl keys`. Keys authenticate every endpoint the dashboard can reach, are shown once at creation, and are stored only as SHA-256 hashes. Roll a key by creating a replacement and revoking the old one.
+- **Distribution**: export `LAIN_API_KEY` on headless servers and CI; on desktops, `lainctl auth login` prompts once and stores a dedicated key in the OS keychain. The admin password is never accepted through environment variables, arguments, or the keyring.
+- **Sessions**: survive restarts, expire after seven days, and are invalidated when the password changes.
+- **Recovery**: forgot the password? Stop laind, clear the stored hash, and restart — the dashboard returns to first-run setup and all existing sessions are invalidated:
+
+  ```bash
+  sudo systemctl stop laind
+  sudo apt install sqlite3
+  sudo sqlite3 /var/lib/lain/lain.db "DELETE FROM auth_credentials;"
+  sudo systemctl start laind
+  ```
+
+- **Cross-origin**: the API is same-origin by default; arbitrary origins are rejected, and `LAIN_TRUSTED_ORIGINS` allows explicit exceptions. State-changing requests must originate from the dashboard's own origin.
+- **Break-glass**: `LAIN_AUTH=off` disables authentication entirely. It is refused in live adapter mode unless `LAIN_ALLOW_UNSAFE_LIVE=i-understand-the-dashboard-is-unauthenticated` is set, and it logs a loud warning in mock mode.
+- **Topology**: keep the dashboard and API on your trusted LAN — never port-forward or expose them directly to the internet. Cloudflare Tunnel ingress is for the services Lain proxies, not for laind itself.
+- **Least privilege**: use a Cloudflare token scoped to DNS edit and Tunnel edit only; keep `.env`, credential source files, the database, and the certificate directory private.

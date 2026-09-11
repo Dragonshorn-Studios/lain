@@ -249,6 +249,7 @@ export async function setupUbuntu(args: string[]): Promise<void> {
   }
   if (options.installLaind) await installLaindService(options);
   console.log("Setup complete. Refresh the dashboard to verify host status.");
+  console.log("Then open the dashboard and complete first-run setup immediately: whoever sets the admin password first owns the dashboard.");
 }
 
 export const setupHelp = `lainctl setup ubuntu [options]

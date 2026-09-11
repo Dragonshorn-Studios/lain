@@ -34,3 +34,31 @@ export const healthStatuses = sqliteTable("health_statuses", {
   message: text("message").notNull(),
   checkedAt: text("checked_at")
 });
+
+export const authCredentials = sqliteTable("auth_credentials", {
+  id: integer("id").primaryKey(),
+  passwordHash: text("password_hash").notNull(),
+  version: integer("version").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
+
+export const apiKeys = sqliteTable("api_keys", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  prefix: text("prefix").notNull(),
+  keyHash: text("key_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  lastUsedAt: text("last_used_at"),
+  revokedAt: text("revoked_at")
+}, (table) => [uniqueIndex("api_keys_hash_unique").on(table.keyHash)]);
+
+export const authSessions = sqliteTable("auth_sessions", {
+  sessionId: text("session_id").primaryKey(),
+  data: text("data").notNull(),
+  touchedAt: text("touched_at").notNull()
+});
+
+export const serverSettings = sqliteTable("server_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull()
+});

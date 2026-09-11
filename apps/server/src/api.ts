@@ -1,10 +1,14 @@
 import { existsSync } from "node:fs";
 import { isIPv4 } from "node:net";
 import { resolve } from "node:path";
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
+import session from "@fastify/session";
+import type { ApiKeyCreated, ApiKeyInfo, AuthSessionInfo, DashboardSummary, ServiceWithStatus, SystemSetup } from "@lain/shared";
 import Fastify from "fastify";
-import type { DashboardSummary, ServiceWithStatus, SystemSetup } from "@lain/shared";
+import type { FastifyRequest } from "fastify";
+import { AuthService } from "./auth/service.js";
 import type { Config } from "./config.js";
 import { HealthChecker } from "./core/health.js";
 import { Reconciler } from "./core/reconciler.js";
@@ -13,16 +17,152 @@ import { DnsServer } from "./network/dns-server.js";
 import { ServiceRepository } from "./services/repository.js";
 import { serviceInputSchema } from "./services/validation.js";
 
-export async function buildApi(config: Config, repository: ServiceRepository, reconciler: Reconciler, health: HealthChecker, dns: DnsServer, systemSetup = new SystemSetupChecker(config)) {
-  const app = Fastify({ logger: true });
-  await app.register(cors, { origin: true });
+declare module "fastify" {
+  interface Session {
+    passwordVersion?: number;
+  }
+}
+
+const SESSION_COOKIE_NAME = "lain_session";
+const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MIN_PASSWORD_LENGTH = 10;
+const LOCKOUT_LIMIT = 5;
+const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
+
+export async function buildApi(config: Config, repository: ServiceRepository, reconciler: Reconciler, health: HealthChecker, dns: DnsServer, auth: AuthService, systemSetup = new SystemSetupChecker(config)) {
+  const app = Fastify({
+    logger: { level: "info", redact: { paths: ["req.headers.cookie", "req.headers.authorization"], censor: "[redacted]" } }
+  });
+  await app.register(cors, { origin: config.trustedOrigins.length ? config.trustedOrigins : false });
+  await app.register(cookie);
+  await app.register(session, {
+    secret: auth.serverSecret(),
+    cookieName: SESSION_COOKIE_NAME,
+    store: auth.sessionStore(),
+    saveUninitialized: false,
+    cookie: { httpOnly: true, sameSite: "strict", secure: config.publicUrl.startsWith("https"), path: "/", maxAge: SESSION_MAX_AGE_MS }
+  });
   app.addContentTypeParser("application/dns-message", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
+
+  const failures = new Map<string, { count: number; firstAt: number; lockedUntil: number }>();
+  const clientKey = (request: FastifyRequest) => request.socket.remoteAddress ?? "unknown";
+  const locked = (request: FastifyRequest) => {
+    const record = failures.get(clientKey(request));
+    return record !== undefined && record.lockedUntil > Date.now();
+  };
+  const recordFailure = (request: FastifyRequest) => {
+    const key = clientKey(request);
+    const now = Date.now();
+    const record = failures.get(key);
+    if (!record || now - record.firstAt > LOCKOUT_WINDOW_MS) {
+      failures.set(key, { count: 1, firstAt: now, lockedUntil: 0 });
+    } else if ((record.count += 1) >= LOCKOUT_LIMIT) {
+      record.lockedUntil = now + LOCKOUT_WINDOW_MS;
+    }
+  };
+  const clearFailures = (request: FastifyRequest) => failures.delete(clientKey(request));
+
+  const bearerKey = (request: FastifyRequest) => {
+    const header = request.headers.authorization;
+    if (!header?.startsWith("Bearer ")) return undefined;
+    const key = header.slice("Bearer ".length).trim();
+    return key.startsWith("lain_") && key.length > 16 ? key : undefined;
+  };
+  const resolvePrincipal = (request: FastifyRequest): "session" | "api-key" | undefined => {
+    const key = bearerKey(request);
+    if (key !== undefined || request.headers.authorization !== undefined) return auth.verifyApiKey(key ?? "") ? "api-key" : undefined;
+    const session = request.session;
+    if (session?.get("passwordVersion") !== undefined && session.get("passwordVersion") === auth.version()) return "session";
+    return undefined;
+  };
+  const originAllowed = (request: FastifyRequest) => {
+    const header = request.headers.origin ?? request.headers.referer;
+    if (!header) return true;
+    let origin: URL;
+    try { origin = new URL(String(header)); }
+    catch { return false; }
+    try {
+      if (origin.origin === new URL(`http://${request.headers.host ?? ""}`).origin) return true;
+    } catch { /* fall through to configured origins */ }
+    return origin.origin === config.publicUrl || config.trustedOrigins.includes(origin.origin);
+  };
+  const mutates = (method: string) => method !== "GET" && method !== "HEAD";
+
+  app.addHook("preHandler", async (request, reply) => {
+    if (config.authMode === "off") return;
+    const url = request.routeOptions.url ?? "";
+    if (!url.startsWith("/api/")) return;
+    if (url === "/api/health" || url === "/api/auth/session") return;
+    if (url === "/api/auth/setup" || url === "/api/auth/login") return;
+    const principal = resolvePrincipal(request);
+    if (!principal) return reply.code(401).send({ error: "Authentication required", setupRequired: !auth.isConfigured() });
+    if (principal === "session" && mutates(request.method) && !originAllowed(request)) {
+      return reply.code(403).send({ error: "Cross-origin request rejected" });
+    }
+  });
+
   app.get("/api/health", async () => ({ status: "ok", name: "laind", adapterMode: config.adapterMode }));
+  app.get("/api/auth/session", async (request): Promise<AuthSessionInfo> => ({
+    authenticated: config.authMode === "off" || resolvePrincipal(request) !== undefined,
+    setupRequired: config.authMode !== "off" && !auth.isConfigured()
+  }));
+  app.post("/api/auth/setup", async (request, reply) => {
+    if (config.authMode === "off") return reply.code(409).send({ error: "Authentication is disabled (LAIN_AUTH=off)" });
+    if (auth.isConfigured()) return reply.code(409).send({ error: "An admin password is already configured; sign in instead" });
+    if (locked(request)) return reply.code(429).send({ error: "Too many attempts; try again later" });
+    const password = String((request.body as { password?: unknown } | null)?.password ?? "");
+    if (password.length < MIN_PASSWORD_LENGTH) return reply.code(400).send({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+    request.session.set("passwordVersion", auth.setPassword(password));
+    await request.session.save();
+    clearFailures(request);
+    return { status: "configured" };
+  });
+  app.post("/api/auth/login", async (request, reply) => {
+    if (config.authMode === "off") return reply.code(409).send({ error: "Authentication is disabled (LAIN_AUTH=off)" });
+    if (!auth.isConfigured()) return reply.code(409).send({ error: "No admin password is configured yet; complete first-run setup" });
+    if (locked(request)) return reply.code(429).send({ error: "Too many failed attempts; try again later" });
+    const password = String((request.body as { password?: unknown } | null)?.password ?? "");
+    if (!auth.verifyPassword(password)) {
+      recordFailure(request);
+      return reply.code(401).send({ error: "Incorrect password" });
+    }
+    clearFailures(request);
+    request.session.set("passwordVersion", auth.version());
+    await request.session.save();
+    return { status: "authenticated" };
+  });
+  app.post("/api/auth/logout", async (request, reply) => {
+    if (request.session?.sessionId) await request.session.destroy();
+    return reply.code(204).send();
+  });
+
+  app.get("/api/keys", async (): Promise<ApiKeyInfo[]> => auth.listKeys());
+  app.post("/api/keys", async (request, reply) => {
+    const name = String((request.body as { name?: unknown } | null)?.name ?? "").trim();
+    if (!name || name.length > 100) return reply.code(400).send({ error: "Provide a key name of 1-100 characters" });
+    const { info, key } = auth.createKey(name);
+    return reply.code(201).send({ ...info, key } satisfies ApiKeyCreated);
+  });
+  app.delete<{ Params: { id: string } }>("/api/keys/:id", async (request, reply) => auth.revokeKey(request.params.id) ? reply.code(204).send() : reply.code(404).send({ error: "Key not found or already revoked" }));
+
   app.get("/api/system/setup", async (request): Promise<SystemSetup> => {
     const setup = await systemSetup.inspect();
     const connectedAddress = request.socket.localAddress?.replace(/^::ffff:/, "");
-    if (!connectedAddress || !isIPv4(connectedAddress) || connectedAddress === "127.0.0.1" || setup.addresses.some(({ address }) => address === connectedAddress)) return setup;
-    return { ...setup, addresses: [{ interface: "connected", address: connectedAddress }, ...setup.addresses] };
+    const withConnection = !connectedAddress || !isIPv4(connectedAddress) || connectedAddress === "127.0.0.1" || setup.addresses.some(({ address }) => address === connectedAddress)
+      ? setup
+      : { ...setup, addresses: [{ interface: "connected", address: connectedAddress }, ...setup.addresses] };
+    const passwordConfigured = config.authMode === "off" || auth.isConfigured();
+    return {
+      ...withConnection,
+      checks: [...withConnection.checks, {
+        id: "admin-password" as const,
+        label: "Admin password",
+        state: passwordConfigured ? "ready" : "error",
+        required: true,
+        detail: passwordConfigured ? "Dashboard authentication is configured" : "No admin password is set — the first person to open the dashboard can claim it",
+        ...(passwordConfigured ? {} : { remediation: { command: `open ${config.publicUrl}/login`, description: "Complete first-run setup in the dashboard to set the admin password." } })
+      }]
+    };
   });
   app.get("/api/services", async (): Promise<ServiceWithStatus[]> => repository.list().map((service) => ({ ...service, status: repository.status(service.id) })));
   app.get<{ Params: { id: string } }>("/api/services/:id", async (request, reply) => {

@@ -62,7 +62,7 @@ export interface DashboardSummary {
 export type SetupCheckState = "ready" | "warning" | "error";
 
 export interface SetupCheck {
-  id: "operating-system" | "node" | "cloudflared" | "cloudflare-config" | "proxy-ports" | "dns-address" | "laind-service" | "cloudflared-service";
+  id: "operating-system" | "node" | "admin-password" | "cloudflared" | "cloudflare-config" | "proxy-ports" | "dns-address" | "laind-service" | "cloudflared-service";
   label: string;
   state: SetupCheckState;
   required: boolean;
@@ -85,6 +85,24 @@ export interface SystemSetup {
 export interface ApiError {
   error: string;
   details?: unknown;
+}
+
+export interface AuthSessionInfo {
+  authenticated: boolean;
+  setupRequired: boolean;
+}
+
+export interface ApiKeyInfo {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface ApiKeyCreated extends ApiKeyInfo {
+  key: string;
 }
 
 export const defaultServiceInput: ServiceInput = {
