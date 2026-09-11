@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -47,7 +47,7 @@ function readLainEnv(name: string, fallback: string): string {
 
 function normalizeVersion(value: string): string {
   const out = value.trim().replace(/^v/, "");
-  if (!/^\d+\.\d+\.\d+([-+].+)?$/.test(out)) abort(`unsupported version format: ${value} (expected vX.Y.Z)`);
+  if (!/^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$/.test(out)) abort(`unsupported version format: ${value} (expected vX.Y.Z)`);
   return out;
 }
 
@@ -56,13 +56,13 @@ function requireRoot(): void {
 }
 
 async function download(url: string, destination: string): Promise<void> {
-  const response = await fetch(url, { headers: { "User-Agent": "lainctl-update" }, redirect: "follow" });
+  const response = await fetch(url, { headers: { "User-Agent": "lainctl-update" }, redirect: "follow", signal: AbortSignal.timeout(180_000) });
   if (!response.ok) abort(`could not download ${url}: HTTP ${response.status} (is the release published and the repository public?)`);
   writeFileSync(destination, Buffer.from(await response.arrayBuffer()));
 }
 
 async function latestReleaseVersion(): Promise<string | undefined> {
-  const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { headers: { "User-Agent": "lainctl-update" } });
+  const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { headers: { "User-Agent": "lainctl-update" }, signal: AbortSignal.timeout(15_000) });
   if (!response.ok) return undefined;
   const body = await response.json() as { tag_name?: string };
   return body.tag_name ? normalizeVersion(body.tag_name) : undefined;
@@ -70,7 +70,10 @@ async function latestReleaseVersion(): Promise<string | undefined> {
 
 function run(command: string, args: string[], options: { cwd?: string } = {}): void {
   const result = spawnSync(command, args, { stdio: "inherit", cwd: options.cwd });
-  if (result.status !== 0) abort(`${command} ${args.join(" ")} failed with exit code ${result.status ?? "signal"}`);
+  if (result.status !== 0 || result.error) {
+    const detail = result.error ? ` (${result.error.message})` : result.signal ? ` (killed by ${result.signal})` : "";
+    abort(`${command} ${args.join(" ")} failed with exit code ${result.status ?? "signal"}${detail}`);
+  }
 }
 
 function switchSymlink(releaseDirectory: string): void {
@@ -123,10 +126,11 @@ function updateHelp(): void {
   console.log(`Usage: lainctl update [--version vX.Y.Z] [--yes]
 
 Updates a versioned install (/opt/lain/releases + /opt/lain/current) to a
-release from GitHub Releases. The tarball is verified against SHA256SUMS,
-built beside the running release, the database is backed up, and the switch
-is rolled back automatically when laind fails its health gate.
-Without --version, the latest published release is used.`);
+release from GitHub Releases. The tarball is verified against SHA256SUMS and
+built beside the running release; laind is then stopped, the database backed
+up, /opt/lain/current switched, and laind started again. Any failure or a
+failed health gate rolls back to the previous release and database
+automatically. Without --version, the latest published release is used.`);
 }
 
 /**
@@ -157,10 +161,12 @@ export async function update(args: string[]): Promise<void> {
   if (target === currentVersion) { console.log(`Already on ${currentVersion}; nothing to update.`); return; }
 
   const database = readLainEnv("LAIN_DATABASE_URL", join(STATE_DIR, "lain.db"));
+  const healthUrl = `http://127.0.0.1:${readLainEnv("LAIN_PORT", "3100")}/api/health`;
   console.log(`Updating laind ${currentVersion} -> ${target}`);
   console.log(`  release:  ${join(RELEASES_DIR, target)}`);
-  console.log(`  database: ${database} (backed up before the switch)`);
-  console.log("  service:  systemctl restart laind, then a health gate with automatic rollback");
+  console.log(`  database: ${database} (backed up while laind is stopped, before the switch)`);
+  console.log(`  health:   ${healthUrl} (availability gate)`);
+  console.log("  service:  systemctl stop/start laind, with automatic rollback on any failure");
 
   if (!assumeYes) {
     if (!process.stdin.isTTY) abort("--yes is required for a non-interactive update");
@@ -186,33 +192,64 @@ export async function update(args: string[]): Promise<void> {
     mkdirSync(RELEASES_DIR, { recursive: true });
     run("mv", [join(temporary, `lain-${target}`), releaseDirectory]);
 
-    console.log("Installing dependencies and building...");
-    run("pnpm", ["install", "--frozen-lockfile"], { cwd: releaseDirectory });
-    run("pnpm", ["build"], { cwd: releaseDirectory });
-
-    backup = backupDatabase(currentVersion, target);
-    if (backup) console.log(`Database backed up to ${backup}`);
-
-    console.log("Switching the current release and restarting laind...");
-    switchSymlink(releaseDirectory);
-    run("systemctl", ["restart", "laind.service"]);
-    if (await waitForHealth()) {
-      pruneReleases([target, previousTarget ?? ""]);
-      console.log(`Updated laind ${currentVersion} -> ${target}.`);
-      return;
+    try {
+      console.log("Installing dependencies and building...");
+      run("pnpm", ["install", "--frozen-lockfile"], { cwd: releaseDirectory });
+      run("pnpm", ["build"], { cwd: releaseDirectory });
+    } catch (error) {
+      // Nothing has been switched yet; a half-built tree would only block re-runs.
+      rmSync(releaseDirectory, { recursive: true, force: true });
+      throw error;
     }
 
-    console.error("laind did not become healthy; rolling back...");
-    if (previousTarget) switchSymlink(resolve(INSTALL_ROOT, previousTarget));
-    if (backup) copyFileSync(backup, database);
-    run("systemctl", ["restart", "laind.service"]);
-    if (!(await waitForHealth())) {
-      console.error("Rollback applied, but laind is still unhealthy; inspect journalctl -u laind -n 100 --no-pager");
-    } else {
-      console.error(`Rolled back to ${currentVersion}. The database was restored${backup ? ` from ${backup}` : " (no backup existed)"}.`);
+    // Everything below mutates the running host: any failure rolls back.
+    try {
+      console.log("Stopping laind for the database backup and release switch...");
+      run("systemctl", ["stop", "laind.service"]);
+      backup = backupDatabase(currentVersion, target);
+      if (backup) console.log(`Database backed up to ${backup}`);
+      else if (existsSync(database)) console.error(`warning: lain.env names ${database} but no backup could be taken; continuing without a backup`);
+      else console.log(`No database exists at ${database} yet; skipping the backup (fresh install).`);
+      switchSymlink(releaseDirectory);
+      run("systemctl", ["start", "laind.service"]);
+      if (!(await waitForHealth())) abort(`laind did not become healthy at ${healthUrl} after the update`);
+    } catch (failure) {
+      await rollback(currentVersion, previousTarget, backup, database, healthUrl, failure);
     }
-    abort(`update to ${target} failed the health gate`);
+
+    pruneReleases([target, previousTarget ? basename(previousTarget) : ""]);
+    console.log(`Updated laind ${currentVersion} -> ${target}.`);
   } finally {
-    rmSync(temporary, { recursive: true, force: true });
+    try { rmSync(temporary, { recursive: true, force: true }); }
+    catch { /* the temp dir is disposable; never mask the primary error */ }
   }
+}
+
+/**
+ * Best-effort recovery after any post-switch failure: stop laind so its
+ * persist-on-shutdown cannot clobber the restore, put the previous release and
+ * database back, then start laind again. Never returns — always aborts with
+ * the original cause plus any rollback problems.
+ */
+async function rollback(currentVersion: string, previousTarget: string | undefined, backup: string | undefined, database: string, healthUrl: string, cause: unknown): Promise<never> {
+  console.error(`Update failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  console.error("Rolling back to the previous release...");
+  const problems: string[] = [];
+  const attempt = (label: string, action: () => void) => {
+    try { action(); }
+    catch (error) { problems.push(`${label}: ${error instanceof Error ? error.message : String(error)}`); }
+  };
+  attempt("stop laind", () => run("systemctl", ["stop", "laind.service"]));
+  if (previousTarget) attempt("switch release", () => switchSymlink(resolve(INSTALL_ROOT, previousTarget)));
+  else problems.push("the previous release target is unknown; /opt/lain/current still points at the new release");
+  if (backup) attempt("restore database", () => copyFileSync(backup, database));
+  attempt("start laind", () => run("systemctl", ["start", "laind.service"]));
+  const recovered = await waitForHealth();
+  const summary = previousTarget
+    ? `rolled back to ${currentVersion}`
+    : "could not switch back (the previous release target is unknown)";
+  if (recovered) console.error(`${summary}; laind is healthy again.${backup ? ` The database was restored from ${backup}.` : ""}`);
+  else console.error(`${summary}, but laind is still not answering at ${healthUrl}; inspect journalctl -u laind -n 100 --no-pager.`);
+  if (problems.length) console.error(`Rollback problems: ${problems.join("; ")}`);
+  abort("update rolled back");
 }

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Single-command Ubuntu installer for Lain. Designed for
-#   curl -fsSL https://raw.githubusercontent.com/Dragonshorn-Studios/lain/<release>/deploy/ubuntu/install.sh | sudo bash
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Dragonshorn-Studios/lain/<release>/deploy/ubuntu/install.sh)" -- --dns-address 192.168.1.20
 # with download -> inspect -> execute documented as the safest path. It shares
 # the guest-installation core with the Proxmox LXC installer and installs a
 # versioned release under /opt/lain/releases with an /opt/lain/current symlink,
@@ -93,8 +93,11 @@ if [[ -e "$CURRENT_LINK" ]]; then
   installed_version=""
   [[ -r "$CURRENT_LINK/package.json" ]] && installed_version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$CURRENT_LINK/package.json" | head -n1)"
   printf 'Lain %s is already installed at %s.\n' "${installed_version:-unknown}" "$CURRENT_LINK"
-  printf 'To change versions run: lainctl update\n'
-  exit 0
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet laind.service; then
+    printf 'To change versions run: lainctl update\n'
+    exit 0
+  fi
+  fail "laind is installed but not running; inspect journalctl -u laind -n 100 --no-pager, fix the cause, then re-run this installer"
 fi
 
 if [[ -z "$REPO_REF" ]]; then
@@ -123,7 +126,10 @@ fi
 [[ "$DNS_ADDRESS" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "DNS_ADDRESS must be a plain IPv4 address, for example 192.168.1.20"
 
 temporary_directory="$(mktemp -d)"
-trap 'rm -rf -- "$temporary_directory"' EXIT
+activated=0
+# A failure before activation leaves a half-built release behind that would
+# block every re-run; remove it unless the release was activated.
+trap 'rm -rf -- "$temporary_directory"; if [[ "$activated" != 1 ]]; then rm -rf -- "$release_dir"; fi' EXIT
 
 core_url="https://raw.githubusercontent.com/Dragonshorn-Studios/lain/${REPO_REF}/deploy/lib/install-core.sh"
 printf 'Fetching the installation core from %s...\n' "$REPO_REF"
@@ -155,6 +161,8 @@ setup_args=(setup ubuntu --install-laind --dns-address "$DNS_ADDRESS" --yes)
 if [[ "$INSTALL_CLOUDFLARED" == 1 ]]; then setup_args+=(--install-cloudflared); fi
 cd "$CURRENT_LINK"
 LAIN_INSTALL_ROOT="$CURRENT_LINK" node apps/cli/dist/main.js "${setup_args[@]}"
+activated=1
+ln -sfn "$CURRENT_LINK/apps/cli/dist/main.js" /usr/local/bin/lainctl
 
 dns_port="$(env_port LAIN_DNS_PORT 53)"
 proxy_port="$(env_port LAIN_PROXY_PORT 80)"
@@ -176,9 +184,11 @@ done
 if command -v ss >/dev/null 2>&1; then
   [[ -n "$(ss -H -lun "sport = :${dns_port}")" ]] || printf '\033[33mwarning:\033[0m nothing is listening on UDP :%s yet\n' "$dns_port" >&2
   [[ -n "$(ss -H -ltn "sport = :${proxy_port}")" ]] || printf '\033[33mwarning:\033[0m nothing is listening on TCP :%s yet\n' "$proxy_port" >&2
+else
+  printf '\033[33mwarning:\033[0m ss is not installed; skipping the listening-port checks\n' >&2
 fi
 
 printf '\nLain installation completed successfully.\n'
 printf '%s\n' "$health"
 printf 'Open http://%s:%s and complete first-run setup immediately: whoever sets the admin password first owns the dashboard.\n' "$DNS_ADDRESS" "$api_port"
-printf 'For machine access create an API key (lainctl keys create) and export it as LAIN_API_KEY.\n'
+printf 'lainctl is installed at /usr/local/bin/lainctl. For machine access create an API key (lainctl keys create) and export it as LAIN_API_KEY.\n'

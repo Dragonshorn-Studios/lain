@@ -42,10 +42,10 @@ Lain can run in a dedicated unprivileged Debian LXC instead of a full VM. A Comm
 On a bare Ubuntu 22.04/24.04 host, a single reviewed command installs the same hardened systemd setup with a versioned release layout:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dragonshorn-Studios/lain/<release>/deploy/ubuntu/install.sh | sudo bash -s -- --dns-address 192.168.1.20
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Dragonshorn-Studios/lain/<release>/deploy/ubuntu/install.sh)" -- --dns-address 192.168.1.20
 ```
 
-Updates are `sudo lainctl update` — checksum-verified release tarballs, a database backup, an atomic release switch, and automatic rollback when the health gate fails. See [`deploy/ubuntu`](deploy/ubuntu/README.md).
+Updates are `sudo lainctl update` on a versioned install — checksum-verified release tarballs, laind stopped for a database backup, an atomic release switch, and automatic rollback when the health gate fails. See [`deploy/ubuntu`](deploy/ubuntu/README.md).
 
 ## Commands
 
@@ -59,7 +59,7 @@ pnpm test                # run tests
 pnpm lainctl status
 pnpm lainctl services
 pnpm lainctl reconcile
-pnpm lainctl update
+pnpm lainctl update      # versioned installs only; requires root
 pnpm lainctl keys create home-ci
 pnpm lainctl auth login
 ```

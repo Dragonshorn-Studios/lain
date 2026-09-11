@@ -102,7 +102,7 @@ lain_install_guest() {
   lain_require_os "${LAIN_REQUIRE_OS:-}"
   [[ ! -e "$source_dir" ]] || lain_fail "$source_dir already exists; refusing to overwrite it"
   # An installer is unattended: never let pnpm prompt for module purges.
-  export CI="${CI:-true}"
+  export CI=true
   lain_install_packages
   lain_install_node
   lain_install_pnpm

@@ -42,7 +42,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install --yes shellcheck
           fi
-          shellcheck deploy/proxmox/*.sh scripts/*.sh
+          shellcheck deploy/proxmox/*.sh deploy/lib/*.sh deploy/ubuntu/*.sh scripts/*.sh
       - name: Repository references
         run: scripts/check-repo-refs.sh
       - name: Deployment launcher fixture
