@@ -5,7 +5,8 @@ set -Eeuo pipefail
 # Run this checked-out script as root on the Proxmox host. Secrets are configured
 # separately after the container exists; do not pass them to this script.
 
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 readonly INSTALLER="${SCRIPT_DIR}/install-lain.sh"
 
 REPO_REF="${REPO_REF:-main}"
@@ -57,7 +58,11 @@ trap on_error ERR
 for command in pct pveam pvesh awk grep sort stat tail; do need "$command"; done
 [[ -f "$INSTALLER" ]] || fail "missing sibling installer: $INSTALLER"
 valid_ref "$REPO_REF" || fail "REPO_REF contains unsupported characters"
-[[ "$IP_CIDR" =~ ^(.+)/([0-9]|[12][0-9]|3[0-2])$ ]] && valid_ipv4 "${BASH_REMATCH[1]}" || fail "IP_CIDR must look like 192.168.1.20/24"
+if [[ "$IP_CIDR" =~ ^(.+)/([0-9]|[12][0-9]|3[0-2])$ ]]; then
+  valid_ipv4 "${BASH_REMATCH[1]}" || fail "IP_CIDR must look like 192.168.1.20/24"
+else
+  fail "IP_CIDR must look like 192.168.1.20/24"
+fi
 valid_ipv4 "$GATEWAY" || fail "GATEWAY must be an IPv4 address"
 valid_name "$CT_HOSTNAME" || fail "CT_HOSTNAME contains unsupported characters"
 valid_name "$BRIDGE" || fail "BRIDGE contains unsupported characters"

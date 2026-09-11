@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # checkout or fetched into `bash -c`. It never accepts or handles application
 # credentials; Cloudflare secrets are imported after installation.
 
-readonly SOURCE_REPOSITORY="https://github.com/Rughalt/lain.git"
+readonly SOURCE_REPOSITORY="https://github.com/Dragonshorn-Studios/lain.git"
 REPO_REF="${REPO_REF:-main}"
 CT_ID="${CT_ID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-lain}"
@@ -83,32 +83,34 @@ confirm() {
   fi
 }
 
-[[ ${EUID} -eq 0 ]] || fail "run this command in the Proxmox VE root shell"
-command -v pct >/dev/null 2>&1 || fail "pct was not found; this must run on a Proxmox VE host"
-[[ -t 0 ]] || fail "an interactive terminal is required"
+collect_settings() {
+  [[ ${EUID} -eq 0 ]] || fail "run this command in the Proxmox VE root shell"
+  command -v pct >/dev/null 2>&1 || fail "pct was not found; this must run on a Proxmox VE host"
+  [[ -t 0 ]] || fail "an interactive terminal is required"
 
-header
-mode="$(choose_mode)"
-[[ "$mode" != cancel ]] || exit 0
+  header
+  local mode detected_gateway summary
+  mode="$(choose_mode)"
+  [[ "$mode" != cancel ]] || exit 0
 
-IP_CIDR="$(input "Container network" "Unused static address with prefix, for example 192.168.1.20/24" "$IP_CIDR")"
-detected_gateway="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
-GATEWAY="$(input "Container network" "LAN gateway" "${GATEWAY:-$detected_gateway}")"
+  IP_CIDR="$(input "Container network" "Unused static address with prefix, for example 192.168.1.20/24" "$IP_CIDR")"
+  detected_gateway="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
+  GATEWAY="$(input "Container network" "LAN gateway" "${GATEWAY:-$detected_gateway}")"
 
-if [[ "$mode" == advanced ]]; then
-  CT_ID="$(input "Container" "CT ID (leave empty to allocate the next ID)" "$CT_ID")"
-  CT_HOSTNAME="$(input "Container" "Hostname" "$CT_HOSTNAME")"
-  BRIDGE="$(input "Network" "Proxmox bridge" "$BRIDGE")"
-  TEMPLATE_STORAGE="$(input "Storage" "Template storage" "$TEMPLATE_STORAGE")"
-  ROOTFS_STORAGE="$(input "Storage" "Container disk storage" "$ROOTFS_STORAGE")"
-  DEBIAN_RELEASE="$(input "Operating system" "Debian release (12 or 13)" "$DEBIAN_RELEASE")"
-  CORES="$(input "Resources" "CPU cores" "$CORES")"
-  MEMORY_MB="$(input "Resources" "Memory in MiB" "$MEMORY_MB")"
-  DISK_GB="$(input "Resources" "Disk size in GiB" "$DISK_GB")"
-  INSTALL_CLOUDFLARED="$(input "Cloudflare" "Install cloudflared package now? (1 yes, 0 no)" "$INSTALL_CLOUDFLARED")"
-fi
+  if [[ "$mode" == advanced ]]; then
+    CT_ID="$(input "Container" "CT ID (leave empty to allocate the next ID)" "$CT_ID")"
+    CT_HOSTNAME="$(input "Container" "Hostname" "$CT_HOSTNAME")"
+    BRIDGE="$(input "Network" "Proxmox bridge" "$BRIDGE")"
+    TEMPLATE_STORAGE="$(input "Storage" "Template storage" "$TEMPLATE_STORAGE")"
+    ROOTFS_STORAGE="$(input "Storage" "Container disk storage" "$ROOTFS_STORAGE")"
+    DEBIAN_RELEASE="$(input "Operating system" "Debian release (12 or 13)" "$DEBIAN_RELEASE")"
+    CORES="$(input "Resources" "CPU cores" "$CORES")"
+    MEMORY_MB="$(input "Resources" "Memory in MiB" "$MEMORY_MB")"
+    DISK_GB="$(input "Resources" "Disk size in GiB" "$DISK_GB")"
+    INSTALL_CLOUDFLARED="$(input "Cloudflare" "Install cloudflared package now? (1 yes, 0 no)" "$INSTALL_CLOUDFLARED")"
+  fi
 
-summary="Source:       ${SOURCE_REPOSITORY} (${REPO_REF})
+  summary="Source:       ${SOURCE_REPOSITORY} (${REPO_REF})
 Container ID: ${CT_ID:-next available}
 Hostname:     ${CT_HOSTNAME}
 Address:      ${IP_CIDR}
@@ -120,7 +122,22 @@ OS:           Debian ${DEBIAN_RELEASE}, unprivileged, nesting disabled
 Cloudflared:  $([[ "$INSTALL_CLOUDFLARED" == 1 ]] && printf 'install only' || printf 'skip')
 
 Cloudflare credentials are configured separately after installation."
-confirm "$summary" || { printf 'Cancelled. No container was created.\n'; exit 0; }
+  confirm "$summary" || { printf 'Cancelled. No container was created.\n'; exit 0; }
+}
+
+dry_run="${LAIN_INSTALL_DRY_RUN:-0}"
+for argument in "$@"; do
+  case "$argument" in
+    --dry-run) dry_run=1 ;;
+    *) fail "unknown option: $argument (supported: --dry-run)" ;;
+  esac
+done
+
+if [[ "$dry_run" == 1 ]]; then
+  printf 'Dry run: prompts are skipped; no privileged command runs and no container is created.\n'
+else
+  collect_settings
+fi
 
 launcher_dir=""
 if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
@@ -148,6 +165,15 @@ if [[ ! -f "$creator" || ! -f "$guest_installer" ]]; then
   curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 "$raw_base/install-lain.sh" --output "$temporary_directory/install-lain.sh"
   chmod 0700 "$temporary_directory/create-lxc.sh" "$temporary_directory/install-lain.sh"
   creator="$temporary_directory/create-lxc.sh"
+  guest_installer="$temporary_directory/install-lain.sh"
+fi
+
+if [[ "$dry_run" == 1 ]]; then
+  bash -n "$creator" || fail "syntax check failed for the launcher component: $creator"
+  bash -n "$guest_installer" || fail "syntax check failed for the installer component: $guest_installer"
+  printf 'Dry run passed. Every deployment component resolved from %s (ref %s):\n  %s\n  %s\n' \
+    "$SOURCE_REPOSITORY" "$REPO_REF" "$creator" "$guest_installer"
+  exit 0
 fi
 
 env \

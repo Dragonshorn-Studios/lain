@@ -8,3 +8,6 @@ coverage/
 apps/web/.vite/
 apps/server/data/
 *.tsbuildinfo
+
+# ZCode local session artifacts
+.zcode/

@@ -19,7 +19,7 @@ The MVP includes:
 ## Requirements
 
 - Node.js 22 or newer
-- pnpm 10 or newer
+- pnpm 11.19.0 (Corepack installs the version pinned by `packageManager`; run `corepack enable` once)
 
 ## Quick start
 
@@ -165,7 +165,9 @@ apps/cli      lainctl
 apps/agent    lain-agent stub
 packages/shared  shared domain and API types
 docs/systemd  deployment examples
+docs/RELEASING.md  release tags and checksums
 deploy/proxmox  unprivileged Proxmox LXC bootstrap
+scripts  CI guard scripts
 ```
 
 ## Security notes

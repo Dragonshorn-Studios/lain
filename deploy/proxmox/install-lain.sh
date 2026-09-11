@@ -6,7 +6,7 @@ set -Eeuo pipefail
 readonly INSTALL_ROOT="/opt/lain"
 readonly NODE_ROOT="/usr/local/lib/nodejs"
 
-readonly SOURCE_REPOSITORY="https://github.com/Rughalt/lain.git"
+readonly SOURCE_REPOSITORY="https://github.com/Dragonshorn-Studios/lain.git"
 REPO_REF="${REPO_REF:-main}"
 DNS_ADDRESS="${DNS_ADDRESS:?DNS_ADDRESS is required}"
 INSTALL_CLOUDFLARED="${INSTALL_CLOUDFLARED:-1}"
