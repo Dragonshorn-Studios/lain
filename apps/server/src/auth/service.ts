@@ -10,6 +10,8 @@ import type { SessionStore } from "@fastify/session";
 
 const lastUsedThrottleMs = 60_000;
 
+export const MIN_PASSWORD_LENGTH = 10;
+
 /** Owns the admin password hash, API keys, and the session-cookie secret. */
 export class AuthService {
   constructor(private readonly db: LainDatabase, private readonly persist: () => void) {}
@@ -18,12 +20,21 @@ export class AuthService {
     return this.currentPassword() !== undefined;
   }
 
-  /** Bumped on every password change so existing sessions and derived state can detect staleness. */
+  /**
+   * Bumped on every password change so stored sessions can detect staleness.
+   * Starts at 1 for the first password; 0 therefore means "no password yet" and
+   * must never authenticate — see isCurrentSession.
+   */
   version(): number {
     return this.currentPassword()?.version ?? 0;
   }
 
+  isCurrentSession(passwordVersion: number | undefined): boolean {
+    return passwordVersion !== undefined && passwordVersion === this.version() && passwordVersion > 0;
+  }
+
   setPassword(password: string): number {
+    if (password.length < MIN_PASSWORD_LENGTH) throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
     const existing = this.currentPassword();
     const version = (existing?.version ?? 0) + 1;
     const updatedAt = new Date().toISOString();

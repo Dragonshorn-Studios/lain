@@ -1,12 +1,24 @@
 import { Activity, BookOpen, Boxes, CircuitBoard, Github, KeyRound, LogOut } from "lucide-react";
 import { useEffect, useState, type PropsWithChildren } from "react";
 import { NavLink } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiRequestError } from "../api";
 
 export function Layout({ children }: PropsWithChildren) {
   const [authenticated, setAuthenticated] = useState(false);
+  const [signOutError, setSignOutError] = useState("");
   useEffect(() => { api.authSession().then((session) => setAuthenticated(session.authenticated)).catch(() => setAuthenticated(false)); }, []);
-  const signOut = async () => { try { await api.authLogout(); } catch { /* already signed out */ } window.location.assign("/login"); };
+  const signOut = async () => {
+    setSignOutError("");
+    try {
+      await api.authLogout();
+      window.location.assign("/login");
+    } catch (cause) {
+      // A 401/403 means the session was already gone — safe to proceed to login.
+      // Anything else leaves the session valid server-side, so stay and say so.
+      if (cause instanceof ApiRequestError && (cause.status === 401 || cause.status === 403)) window.location.assign("/login");
+      else setSignOutError("Sign out failed — try again.");
+    }
+  };
   return <div className="min-h-screen lg:grid lg:grid-cols-[240px_1fr]">
     <aside className="wired-sidebar border-b border-white/10 px-5 py-4 lg:fixed lg:inset-y-0 lg:w-[240px] lg:border-b-0 lg:border-r lg:px-6 lg:py-8">
       <div className="flex items-center gap-3"><div className="logo-signal grid h-10 w-10 place-items-center border border-wired-500/30 bg-wired-500/10" aria-label="Lain hair clip"><span className="lain-hairclip" aria-hidden="true"/></div><div><div className="font-mono text-xl font-semibold tracking-[.08em]">lain</div><div className="font-mono text-[10px] uppercase tracking-[.24em] text-white/35">serial interface</div></div></div>
@@ -18,6 +30,7 @@ export function Layout({ children }: PropsWithChildren) {
       </nav>
       <div className="mt-8 hidden border-t border-white/10 pt-6 text-xs leading-5 text-white/35 lg:block"><div className="mb-2 flex items-center gap-2 font-mono text-wired-400/70"><CircuitBoard size={14}/> NODE: HOME</div>Service intent becomes network state.</div>
       <div className="absolute bottom-7 hidden lg:block"><div className="flex flex-col gap-3">
+        {signOutError && <div className="max-w-[190px] text-xs text-rose-300">{signOutError}</div>}
         {authenticated && <button type="button" onClick={() => void signOut()} className="flex items-center gap-2 text-xs text-white/30 hover:text-white/60"><LogOut size={14}/>Sign out</button>}
         <a className="flex items-center gap-2 text-xs text-white/30 hover:text-white/60" href="https://github.com" target="_blank"><Github size={14}/> MVP 0.1.0</a>
       </div></div>

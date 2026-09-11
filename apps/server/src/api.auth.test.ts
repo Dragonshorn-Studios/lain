@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { buildApi } from "./api.js";
 import { AuthService } from "./auth/service.js";
+import { redactSecrets } from "./auth/redact.js";
 import { loadConfig } from "./config.js";
 import { createDatabase } from "./db/client.js";
 import { HealthChecker } from "./core/health.js";
@@ -20,8 +21,7 @@ const testService = { ...defaultServiceInput, name: "Test", hostname: "test.inte
 const strongPassword = "correct-horse-battery-staple";
 const COOKIE_NAME = "lain_session";
 
-async function buildApp(env: Record<string, string> = {}) {
-  const directory = mkdtempSync(join(tmpdir(), "lain-auth-"));
+async function buildApp(env: Record<string, string> = {}, directory = mkdtempSync(join(tmpdir(), "lain-auth-"))) {
   directories.push(directory);
   const config = loadConfig({ ...env, LAIN_DATABASE_URL: join(directory, "test.db") });
   const { db, persist } = await createDatabase(config.databaseUrl);
@@ -82,6 +82,9 @@ describe("api authentication", () => {
     const setup = await app.inject({ method: "POST", url: "/api/auth/setup", payload: { password: strongPassword } });
     expect(setup.statusCode).toBe(200);
     const cookie = sessionCookie(setup);
+    const setCookieHeader = Array.isArray(setup.headers["set-cookie"]) ? setup.headers["set-cookie"].join("; ") : String(setup.headers["set-cookie"]);
+    expect(setCookieHeader).toContain("HttpOnly");
+    expect(setCookieHeader).toContain("SameSite=Strict");
 
     expect((await app.inject({ method: "POST", url: "/api/auth/setup", payload: { password: "another password" } })).statusCode).toBe(409);
 
@@ -113,11 +116,40 @@ describe("api authentication", () => {
     expect(allowed.statusCode).toBe(201);
     const serviceId = allowed.json().id as string;
 
-    const spoofed = await app.inject({ method: "DELETE", url: `/api/services/${serviceId}`, headers: { cookie, origin: "https://evil.example", "x-forwarded-host": "evil.example" } });
+    const spoofed = await app.inject({ method: "DELETE", url: `/api/services/${serviceId}`, headers: { cookie, origin: "https://evil.example" } });
     expect(spoofed.statusCode).toBe(403);
 
     const read = await app.inject({ method: "GET", url: "/api/services", headers: { cookie, origin: "https://evil.example" } });
     expect(read.statusCode).toBe(200);
+  });
+
+  it("accepts same-host origins and referers even when publicUrl differs, and rejects malformed ones", async () => {
+    const { app } = await buildApp({ LAIN_PUBLIC_URL: "http://dashboard.example" });
+    const cookie = await configureAdmin(app);
+
+    // The publicUrl branch cannot match, so this exercises the Host-header branch:
+    // a browser on the LAN sends Origin equal to the host it is talking to.
+    const viaHost = await app.inject({ method: "POST", url: "/api/services", headers: { host: "lain.lan:3100", cookie, "content-type": "application/json", origin: "http://lain.lan:3100" }, payload: testService });
+    expect(viaHost.statusCode).toBe(201);
+
+    const viaReferer = await app.inject({ method: "POST", url: "/api/services", headers: { host: "lain.lan:3100", cookie, "content-type": "application/json", referer: "http://lain.lan:3100/services" }, payload: { ...testService, hostname: "referer.internal" } });
+    expect(viaReferer.statusCode).toBe(201);
+
+    const malformed = await app.inject({ method: "POST", url: "/api/services", headers: { cookie, "content-type": "application/json", origin: "not a url" }, payload: testService });
+    expect(malformed.statusCode).toBe(403);
+  });
+
+  it("keeps dashboard sessions valid across a server restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "lain-auth-"));
+    const env = { LAIN_DATABASE_URL: join(directory, "test.db") };
+    const first = await buildApp(env, directory);
+    const setup = await first.app.inject({ method: "POST", url: "/api/auth/setup", payload: { password: strongPassword } });
+    expect(setup.statusCode).toBe(200);
+    const cookie = sessionCookie(setup);
+    expect((await first.app.inject({ method: "GET", url: "/api/services", headers: { cookie } })).statusCode).toBe(200);
+
+    const second = await buildApp(env, directory);
+    expect((await second.app.inject({ method: "GET", url: "/api/services", headers: { cookie } })).statusCode).toBe(200);
   });
 
   it("authenticates API keys, never exposes their material, and supports revocation", async () => {
@@ -162,6 +194,19 @@ describe("api authentication", () => {
     expect((await app.inject({ method: "GET", url: "/api/services", headers: { cookie: liveCookie } })).statusCode).toBe(401);
   });
 
+  it("clears the failure counter after a successful login", async () => {
+    const { app } = await buildApp();
+    await app.inject({ method: "POST", url: "/api/auth/setup", payload: { password: strongPassword } });
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      expect((await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: "wrong-password" } })).statusCode).toBe(401);
+    }
+    expect((await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: strongPassword } })).statusCode).toBe(200);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      expect((await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: "wrong-password" } })).statusCode).toBe(401);
+    }
+    expect((await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: strongPassword } })).statusCode).toBe(200);
+  });
+
   it("locks the login endpoint after repeated failures", async () => {
     const { app } = await buildApp();
     await app.inject({ method: "POST", url: "/api/auth/setup", payload: { password: strongPassword } });
@@ -192,5 +237,29 @@ describe("api authentication", () => {
     expect(trusted.headers["access-control-allow-origin"]).toBe("https://trusted.example");
     const other = await trusting.inject({ method: "GET", url: "/api/health", headers: { origin: "https://evil.example" } });
     expect(other.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+});
+
+describe("secret redaction wiring", () => {
+  it("scrubs adapter error messages before they are persisted and served", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "lain-auth-"));
+    directories.push(directory);
+    const config = loadConfig({ LAIN_DATABASE_URL: join(directory, "test.db") });
+    const { db, persist } = await createDatabase(config.databaseUrl);
+    const repository = new ServiceRepository(db, persist);
+    const secret = "super-secret-token-value";
+    const failingAdapter = {
+      component: "cloudflare-dns" as const,
+      reconcile: async () => { throw new Error(`Cloudflare request failed with Bearer ${secret}`); }
+    };
+    const reconciler = new Reconciler(repository, [failingAdapter], (message) => redactSecrets(message, [secret]));
+    const service = repository.create(testService);
+    await reconciler.reconcileService(service);
+
+    const status = repository.status(service.id);
+    const message = status.components.find((component) => component.component === "cloudflare-dns")?.message ?? "";
+    expect(message).not.toContain(secret);
+    expect(message).toContain("[redacted]");
+    expect(message).toContain("Bearer [redacted]");
   });
 });

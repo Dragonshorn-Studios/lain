@@ -1,5 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
+// RFC 7914 / OWASP-recommended scrypt baseline for interactive use.
 const scryptOptions = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 
 export function hashPassword(password: string): string {

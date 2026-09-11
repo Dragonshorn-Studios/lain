@@ -33,6 +33,11 @@ describe("authentication configuration", () => {
     expect(loadConfig({ LAIN_TRUSTED_ORIGINS: " https://a.example , https://b.example ,," }).trustedOrigins).toEqual(["https://a.example", "https://b.example"]);
   });
 
+  it("normalizes trusted origins and rejects unparseable entries", () => {
+    expect(loadConfig({ LAIN_TRUSTED_ORIGINS: "https://a.example/some/path" }).trustedOrigins).toEqual(["https://a.example"]);
+    expect(() => loadConfig({ LAIN_TRUSTED_ORIGINS: "not an absolute url" })).toThrow(/LAIN_TRUSTED_ORIGINS/);
+  });
+
   it("refuses to start live adapters with authentication disabled without an explicit acknowledgement", () => {
     expect(() => loadConfig({ LAIN_AUTH: "off", LAIN_ADAPTER_MODE: "live" })).toThrow(/LAIN_ALLOW_UNSAFE_LIVE/);
     const config = loadConfig({ LAIN_AUTH: "off", LAIN_ADAPTER_MODE: "live", LAIN_ALLOW_UNSAFE_LIVE: UNSAFE_LIVE_ACKNOWLEDGEMENT });

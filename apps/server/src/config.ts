@@ -60,7 +60,7 @@ export function loadConfig(env = process.env): Config {
     adapterMode: env.LAIN_ADAPTER_MODE === "live" ? "live" : "mock",
     authMode: env.LAIN_AUTH === "off" ? "off" : "session",
     allowUnsafeLive: env.LAIN_ALLOW_UNSAFE_LIVE === UNSAFE_LIVE_ACKNOWLEDGEMENT,
-    trustedOrigins: (env.LAIN_TRUSTED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean),
+    trustedOrigins: parseTrustedOrigins(env.LAIN_TRUSTED_ORIGINS),
     cloudflare: {
       apiToken: credential(env, "cloudflare-api-token", env.CLOUDFLARE_API_TOKEN),
       zoneId: env.CLOUDFLARE_ZONE_ID,
@@ -81,4 +81,13 @@ function assertSafeAuthCombination(config: Config): void {
     "change the registry and trigger external Cloudflare and Let's Encrypt mutations. " +
     `Re-enable authentication (remove LAIN_AUTH=off) or set LAIN_ALLOW_UNSAFE_LIVE=${UNSAFE_LIVE_ACKNOWLEDGEMENT} to accept the risk explicitly.`
   );
+}
+
+// Parses to URL origins so trailing slashes, paths, and casing can never
+// silently fail to match an Origin header later.
+function parseTrustedOrigins(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+    try { return new URL(entry).origin; }
+    catch { throw new Error(`Invalid LAIN_TRUSTED_ORIGINS entry "${entry}": expected an absolute origin such as https://host.example`); }
+  });
 }

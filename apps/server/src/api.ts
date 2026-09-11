@@ -16,22 +16,23 @@ import { SystemSetupChecker } from "./core/system-setup.js";
 import { DnsServer } from "./network/dns-server.js";
 import { ServiceRepository } from "./services/repository.js";
 import { serviceInputSchema } from "./services/validation.js";
-
-declare module "fastify" {
-  interface Session {
-    passwordVersion?: number;
-  }
-}
+import { MIN_PASSWORD_LENGTH } from "./auth/service.js";
+import "./auth/session-types.js";
 
 const SESSION_COOKIE_NAME = "lain_session";
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const MIN_PASSWORD_LENGTH = 10;
 const LOCKOUT_LIMIT = 5;
 const LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
+const LOCKOUT_MAX_TRACKED_CLIENTS = 1000;
+
+type Principal = "session" | "api-key";
 
 export async function buildApi(config: Config, repository: ServiceRepository, reconciler: Reconciler, health: HealthChecker, dns: DnsServer, auth: AuthService, systemSetup = new SystemSetupChecker(config)) {
   const app = Fastify({
-    logger: { level: "info", redact: { paths: ["req.headers.cookie", "req.headers.authorization"], censor: "[redacted]" } }
+    logger: {
+      level: process.env.LAIN_LOG_LEVEL ?? (process.env.NODE_ENV === "test" ? "warn" : "info"),
+      redact: { paths: ["req.headers.cookie", "req.headers.authorization"], censor: "[redacted]" }
+    }
   });
   await app.register(cors, { origin: config.trustedOrigins.length ? config.trustedOrigins : false });
   await app.register(cookie);
@@ -40,10 +41,16 @@ export async function buildApi(config: Config, repository: ServiceRepository, re
     cookieName: SESSION_COOKIE_NAME,
     store: auth.sessionStore(),
     saveUninitialized: false,
+    rolling: false,
     cookie: { httpOnly: true, sameSite: "strict", secure: config.publicUrl.startsWith("https"), path: "/", maxAge: SESSION_MAX_AGE_MS }
   });
   app.addContentTypeParser("application/dns-message", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
 
+  // In-memory per-IP login lockout: 5 failures inside the window lock the address
+  // for the window. Restarting laind clears it; every client behind one proxy
+  // shares a single bucket, which is the safe direction for a LAN service.
+  // /api/auth/setup checks `locked` but never records failures: recording would
+  // let an attacker lock the real owner out of first-run setup.
   const failures = new Map<string, { count: number; firstAt: number; lockedUntil: number }>();
   const clientKey = (request: FastifyRequest) => request.socket.remoteAddress ?? "unknown";
   const locked = (request: FastifyRequest) => {
@@ -58,6 +65,12 @@ export async function buildApi(config: Config, repository: ServiceRepository, re
       failures.set(key, { count: 1, firstAt: now, lockedUntil: 0 });
     } else if ((record.count += 1) >= LOCKOUT_LIMIT) {
       record.lockedUntil = now + LOCKOUT_WINDOW_MS;
+      app.log.warn(`login lockout engaged for ${key} until ${new Date(record.lockedUntil).toISOString()}`);
+    }
+    if (failures.size > LOCKOUT_MAX_TRACKED_CLIENTS) {
+      for (const [trackedKey, tracked] of failures) {
+        if (tracked.lockedUntil <= now && now - tracked.firstAt > LOCKOUT_WINDOW_MS) failures.delete(trackedKey);
+      }
     }
   };
   const clearFailures = (request: FastifyRequest) => failures.delete(clientKey(request));
@@ -66,14 +79,14 @@ export async function buildApi(config: Config, repository: ServiceRepository, re
     const header = request.headers.authorization;
     if (!header?.startsWith("Bearer ")) return undefined;
     const key = header.slice("Bearer ".length).trim();
-    return key.startsWith("lain_") && key.length > 16 ? key : undefined;
+    return key.startsWith("lain_") && key.length > 16 ? key : undefined; // a real key is 48 chars; this only weeds out obvious garbage before hashing
   };
-  const resolvePrincipal = (request: FastifyRequest): "session" | "api-key" | undefined => {
+  const resolvePrincipal = (request: FastifyRequest): Principal | undefined => {
     const key = bearerKey(request);
+    // An Authorization header always decides the outcome: a bad or malformed key
+    // never falls back to the session cookie.
     if (key !== undefined || request.headers.authorization !== undefined) return auth.verifyApiKey(key ?? "") ? "api-key" : undefined;
-    const session = request.session;
-    if (session?.get("passwordVersion") !== undefined && session.get("passwordVersion") === auth.version()) return "session";
-    return undefined;
+    return auth.isCurrentSession(request.session?.get("passwordVersion")) ? "session" : undefined;
   };
   const originAllowed = (request: FastifyRequest) => {
     const header = request.headers.origin ?? request.headers.referer;
@@ -112,6 +125,7 @@ export async function buildApi(config: Config, repository: ServiceRepository, re
     if (locked(request)) return reply.code(429).send({ error: "Too many attempts; try again later" });
     const password = String((request.body as { password?: unknown } | null)?.password ?? "");
     if (password.length < MIN_PASSWORD_LENGTH) return reply.code(400).send({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+    await request.session.regenerate();
     request.session.set("passwordVersion", auth.setPassword(password));
     await request.session.save();
     clearFailures(request);
@@ -127,12 +141,14 @@ export async function buildApi(config: Config, repository: ServiceRepository, re
       return reply.code(401).send({ error: "Incorrect password" });
     }
     clearFailures(request);
+    await request.session.regenerate();
     request.session.set("passwordVersion", auth.version());
     await request.session.save();
     return { status: "authenticated" };
   });
   app.post("/api/auth/logout", async (request, reply) => {
     if (request.session?.sessionId) await request.session.destroy();
+    reply.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
     return reply.code(204).send();
   });
 

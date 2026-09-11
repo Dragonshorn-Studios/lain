@@ -61,8 +61,11 @@ export interface DashboardSummary {
 
 export type SetupCheckState = "ready" | "warning" | "error";
 
+export const setupCheckIds = ["operating-system", "node", "admin-password", "cloudflared", "cloudflare-config", "proxy-ports", "dns-address", "laind-service", "cloudflared-service"] as const;
+export type SetupCheckId = (typeof setupCheckIds)[number];
+
 export interface SetupCheck {
-  id: "operating-system" | "node" | "admin-password" | "cloudflared" | "cloudflare-config" | "proxy-ports" | "dns-address" | "laind-service" | "cloudflared-service";
+  id: SetupCheckId;
   label: string;
   state: SetupCheckState;
   required: boolean;

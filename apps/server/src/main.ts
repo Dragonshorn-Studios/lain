@@ -18,6 +18,8 @@ const config = loadConfig();
 const { db, sqlite, persist } = await createDatabase(config.databaseUrl);
 const repository = new ServiceRepository(db, persist);
 const auth = new AuthService(db, persist);
+// Component and health messages are persisted and served through the API, so
+// adapter errors must not carry the Cloudflare token into the database.
 const redact = (message: string) => redactSecrets(message, [config.cloudflare.apiToken]);
 const certificateDir = resolve(dirname(config.databaseUrl), "certificates");
 const externalAdapters = config.adapterMode === "live"

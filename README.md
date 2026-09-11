@@ -180,20 +180,20 @@ scripts  CI guard scripts
 
 Access control is single-admin: the dashboard uses an admin password with server-side session cookies, and machines (lainctl, scripts, CI) use API keys. Both are managed after installation.
 
-- **First-run setup**: on first open, the dashboard asks you to create the admin password. Complete it immediately — whoever sets the password first owns the dashboard. Only a scrypt hash is stored; the password never leaves the browser.
-- **API keys**: create and revoke keys on the dashboard's *API keys* page or with `lainctl keys`. Keys authenticate every endpoint the dashboard can reach, are shown once at creation, and are stored only as SHA-256 hashes. Roll a key by creating a replacement and revoking the old one.
+- **First-run setup**: on first open, the dashboard asks you to create the admin password. Complete it immediately — whoever sets the password first owns the dashboard. The password is submitted over HTTP(S) at setup and login, and only a scrypt hash is ever stored server-side.
+- **API keys**: create and revoke keys on the dashboard's *API keys* page or with `lainctl keys`. Keys authenticate every management endpoint (everything except the deliberately open health and auth handshake endpoints), are shown once at creation, and are stored only as SHA-256 hashes. Roll a key by creating a replacement and revoking the old one.
 - **Distribution**: export `LAIN_API_KEY` on headless servers and CI; on desktops, `lainctl auth login` prompts once and stores a dedicated key in the OS keychain. The admin password is never accepted through environment variables, arguments, or the keyring.
-- **Sessions**: survive restarts, expire after seven days, and are invalidated when the password changes.
-- **Recovery**: forgot the password? Stop laind, clear the stored hash, and restart — the dashboard returns to first-run setup and all existing sessions are invalidated:
+- **Sessions**: survive restarts, expire after seven days, and are invalidated when the password changes. Login locks an IP for 15 minutes after 5 failed attempts (in memory; restarting laind clears it).
+- **Recovery**: forgot the password? Stop laind, clear the stored hash and the sessions, and restart — the dashboard returns to first-run setup and every existing session is discarded:
 
   ```bash
   sudo systemctl stop laind
   sudo apt install sqlite3
-  sudo sqlite3 /var/lib/lain/lain.db "DELETE FROM auth_credentials;"
+  sudo sqlite3 /var/lib/lain/lain.db "DELETE FROM auth_credentials; DELETE FROM auth_sessions;"
   sudo systemctl start laind
   ```
 
-- **Cross-origin**: the API is same-origin by default; arbitrary origins are rejected, and `LAIN_TRUSTED_ORIGINS` allows explicit exceptions. State-changing requests must originate from the dashboard's own origin.
+- **Cross-origin**: the API is same-origin by default; arbitrary origins are rejected, and `LAIN_TRUSTED_ORIGINS` allows explicit exceptions. State-changing requests made with a session cookie must originate from the dashboard's own origin; API keys are exempt (they are not ambient credentials, so CSRF does not apply to them).
 - **Break-glass**: `LAIN_AUTH=off` disables authentication entirely. It is refused in live adapter mode unless `LAIN_ALLOW_UNSAFE_LIVE=i-understand-the-dashboard-is-unauthenticated` is set, and it logs a loud warning in mock mode.
 - **Topology**: keep the dashboard and API on your trusted LAN — never port-forward or expose them directly to the internet. Cloudflare Tunnel ingress is for the services Lain proxies, not for laind itself.
 - **Least privilege**: use a Cloudflare token scoped to DNS edit and Tunnel edit only; keep `.env`, credential source files, the database, and the certificate directory private.
