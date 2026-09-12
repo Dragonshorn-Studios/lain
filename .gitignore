@@ -9,5 +9,11 @@ apps/web/.vite/
 apps/server/data/
 *.tsbuildinfo
 
+# Host secret material that must never enter the tree
+credentials/
+*.pem
+*.key
+*.crt
+
 # ZCode local session artifacts
 .zcode/

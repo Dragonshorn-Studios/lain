@@ -189,6 +189,8 @@ scripts  CI guard scripts
 
 ## Security notes
 
+The full threat model and vulnerability reporting live in [SECURITY.md](SECURITY.md).
+
 Access control is single-admin: the dashboard uses an admin password with server-side session cookies, and machines (lainctl, scripts, CI) use API keys. Both are managed after installation.
 
 - **First-run setup**: on first open, the dashboard asks you to create the admin password. Complete it immediately — whoever sets the password first owns the dashboard. The password is submitted over HTTP(S) at setup and login, and only a scrypt hash is ever stored server-side.
@@ -208,3 +210,7 @@ Access control is single-admin: the dashboard uses an admin password with server
 - **Break-glass**: `LAIN_AUTH=off` disables authentication entirely. It is refused in live adapter mode unless `LAIN_ALLOW_UNSAFE_LIVE=i-understand-the-dashboard-is-unauthenticated` is set, and it logs a loud warning in mock mode.
 - **Topology**: keep the dashboard and API on your trusted LAN — never port-forward or expose them directly to the internet. Cloudflare Tunnel ingress is for the services Lain proxies, not for laind itself.
 - **Least privilege**: use a Cloudflare token scoped to DNS edit and Tunnel edit only; keep `.env`, credential source files, the database, and the certificate directory private.
+
+## License
+
+[MIT](LICENSE)
