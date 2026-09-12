@@ -4,7 +4,8 @@ set -Eeuo pipefail
 # Documentation link integrity: every https URL printed in the tracked
 # markdown documentation must resolve, and every relative markdown link must
 # exist in the repository. Plain http URLs are local examples (the dashboard,
-# LAN hosts) and are skipped.
+# LAN hosts) and URLs with <placeholder> markers are templates; both are
+# skipped.
 
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
@@ -31,7 +32,7 @@ url_ok() {
 
 url_pattern="https://[^[:space:]\"\`'<>|)]+"
 for document in "${documents[@]}"; do
-  mapfile -t urls < <(grep -oE "$url_pattern" "$document" | sed 's/[.,;:!?]*$//' | sort -u)
+  mapfile -t urls < <(sed 's/<[^>]*>/#@PLACEHOLDER@#/g' "$document" | grep -oE "$url_pattern" | sed 's/[.,;:!?]*$//' | grep -v '#@PLACEHOLDER@#' | sort -u)
   for url in "${urls[@]}"; do
     [[ -n "$url" ]] || continue
     if url_ok "$url"; then
