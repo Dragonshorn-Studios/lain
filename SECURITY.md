@@ -1,5 +1,9 @@
 # Security policy
 
+## No guarantees
+
+Lain is a hobby project, not a supported product. It ships **as is** under the MIT license, with **no security guarantees and no warranty of any kind**: it runs as root on your hardware, holds your Cloudflare tokens, and proxies your traffic — whatever you do with it, you do on your own. Review the code before you run it (especially anything piped straight into a shell), keep backups, keep it on a trusted LAN, and don't blame us if something goes sideways. Genuine vulnerabilities still get fixed promptly; see reporting below.
+
 ## Supported versions
 
 `main` and the latest release tag (see [docs/RELEASING.md](docs/RELEASING.md)) receive security fixes. Older tags are immutable snapshots — upgrade instead of waiting for patches.

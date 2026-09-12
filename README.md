@@ -1,5 +1,7 @@
 # Lain
 
+> **This is a hobby project.** It comes with no security guarantees, no SLA, and no warranty — you install it on your own hardware, run it as root, and point it at your own Cloudflare account. Review what you run, keep it on a trusted LAN, back up your data, and use it at your own risk. If it eats your homelab, that's on you.
+
 Lain is a small homelab service registry. A **Service** is its single source of truth; DNS, reverse proxy, TLS, Cloudflare DNS, and Cloudflare Tunnel configuration are reconciled derived state.
 
 The MVP includes:
