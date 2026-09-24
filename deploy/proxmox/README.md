@@ -4,7 +4,7 @@ This deployment creates a dedicated, **unprivileged** Debian LXC instead of a VM
 
 ## Before you begin
 
-- Public repository: `https://github.com/Rughalt/lain`.
+- Public repository: `https://github.com/Dragonshorn-Studios/lain`.
 - Reserve a static LAN address for the container.
 - Run the guided command or a checked-out script on a Proxmox VE host as `root`.
 - Allow the container outbound HTTPS for package and source downloads.
@@ -15,28 +15,28 @@ This deployment creates a dedicated, **unprivileged** Debian LXC instead of a VM
 Like Proxmox Community Scripts, the interactive launcher offers **Default** and **Advanced** profiles, prompts for the static network settings, shows the complete container plan, and asks before creating anything. For a public repository, run this in the Proxmox VE shell:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/Rughalt/lain/main/deploy/proxmox/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Dragonshorn-Studios/lain/main/deploy/proxmox/install.sh)"
 ```
 
-The launcher has no telemetry and never requests Cloudflare credentials. The canonical source is pinned to `https://github.com/Rughalt/lain.git`; use `REPO_REF` only when selecting a branch, tag, or reviewed commit.
+The launcher has no telemetry and never requests Cloudflare credentials. The canonical source is pinned to `https://github.com/Dragonshorn-Studios/lain.git`; use `REPO_REF` only when selecting a branch, tag, or reviewed commit.
 
 Running downloaded code as Proxmox `root` necessarily trusts the referenced repository and branch. For the inspect-before-running version, download the launcher first or clone the repository:
 
 ```bash
 curl -fsSLo /tmp/lain-lxc-install.sh \
-  https://raw.githubusercontent.com/Rughalt/lain/main/deploy/proxmox/install.sh
+  https://raw.githubusercontent.com/Dragonshorn-Studios/lain/main/deploy/proxmox/install.sh
 less /tmp/lain-lxc-install.sh
 bash /tmp/lain-lxc-install.sh
 ```
 
-For the most reproducible install, replace `main` in both URLs with a reviewed commit SHA and set `REPO_REF` to the same SHA.
+For the most reproducible install, replace `main` in both URLs with a release tag or a reviewed commit SHA and set `REPO_REF` to the same ref. Release tags and their checksums are documented in [`docs/RELEASING.md`](../../docs/RELEASING.md).
 
 ## Non-interactive install
 
 Clone the repository, review the scripts, and provide all required network settings:
 
 ```bash
-git clone https://github.com/Rughalt/lain.git
+git clone https://github.com/Dragonshorn-Studios/lain.git
 cd lain
 
 IP_CIDR=192.168.1.20/24 \
@@ -92,7 +92,7 @@ dig @192.168.1.20 YOUR_REGISTERED_HOSTNAME
 curl -I http://YOUR_REGISTERED_HOSTNAME
 ```
 
-Then open `http://192.168.1.20:3100`. Configure your router's DHCP service to distribute `192.168.1.20` as the DNS server.
+Then open `http://192.168.1.20:3100` and complete first-run setup immediately: whoever sets the admin password first owns the dashboard. Configure your router's DHCP service to distribute `192.168.1.20` as the DNS server. For machine access, create an API key on the dashboard's *API keys* page (or run `lainctl keys create`) and export it as `LAIN_API_KEY`.
 
 ## Update or recover
 
@@ -104,6 +104,6 @@ pct exec 220 -- bash -lc 'cd /opt/lain && pnpm install --frozen-lockfile && pnpm
 pct exec 220 -- systemctl restart laind
 ```
 
-An installation pinned to a commit SHA is intentionally detached and should be updated by fetching and checking out another reviewed commit instead of using `git pull`.
+An installation pinned to a commit SHA is intentionally detached and should be updated by fetching and checking out another reviewed commit instead of using `git pull`. The guest installer shares its installation core (`deploy/lib/install-core.sh`) with the bare-Ubuntu installer, whose versioned-release updates are described in [`deploy/ubuntu/README.md`](../ubuntu/README.md).
 
 Back up the container with normal Proxmox backup tooling. The important persistent state is `/var/lib/lain`, `/etc/lain`, and `/opt/lain`.

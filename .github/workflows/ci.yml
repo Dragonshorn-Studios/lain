@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: App (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
+      - name: Test
+        run: pnpm test
+
+  deploy-guardrails:
+    name: Deploy guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check shell scripts
+        run: find deploy scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+      - name: Shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes shellcheck
+          fi
+          shellcheck deploy/proxmox/*.sh deploy/lib/*.sh deploy/ubuntu/*.sh scripts/*.sh
+      - name: Repository references
+        run: scripts/check-repo-refs.sh
+      - name: Deployment launcher fixture
+        run: scripts/verify-deploy-launcher.sh
+      - name: Documentation links
+        run: scripts/check-doc-links.sh

@@ -26,6 +26,19 @@ export async function createDatabase(databaseUrl: string) {
     CREATE TABLE IF NOT EXISTS health_statuses (
       service_id TEXT PRIMARY KEY, healthy INTEGER, message TEXT NOT NULL, checked_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS auth_credentials (
+      id INTEGER PRIMARY KEY, password_hash TEXT NOT NULL, version INTEGER NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      session_id TEXT PRIMARY KEY, data TEXT NOT NULL, touched_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS server_settings (
+      key TEXT PRIMARY KEY, value TEXT NOT NULL
+    );
   `);
   const persist = () => writeFileSync(filename, Buffer.from(sqlite.export()));
   persist();

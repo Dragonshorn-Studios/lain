@@ -2,7 +2,11 @@
   "name": "lain",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --parallel --filter @lain/server --filter @lain/web dev",

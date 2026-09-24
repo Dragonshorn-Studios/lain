@@ -1,5 +1,7 @@
 # Lain
 
+> **This is a hobby project.** It comes with no security guarantees, no SLA, and no warranty — you install it on your own hardware, run it as root, and point it at your own Cloudflare account. Review what you run, keep it on a trusted LAN, back up your data, and use it at your own risk. If it eats your homelab, that's on you.
+
 Lain is a small homelab service registry. A **Service** is its single source of truth; DNS, reverse proxy, TLS, Cloudflare DNS, and Cloudflare Tunnel configuration are reconciled derived state.
 
 The MVP includes:
@@ -19,7 +21,7 @@ The MVP includes:
 ## Requirements
 
 - Node.js 22 or newer
-- pnpm 10 or newer
+- pnpm 11.19.0 (Corepack installs the version pinned by `packageManager`; run `corepack enable` once)
 
 ## Quick start
 
@@ -37,6 +39,16 @@ The default `LAIN_ADAPTER_MODE=mock` reports the Cloudflare and ACME operations 
 
 Lain can run in a dedicated unprivileged Debian LXC instead of a full VM. A Community-Scripts-style guided launcher offers Default and Advanced profiles, while the non-interactive bootstrap supports automation. Both create the container without Docker or nesting, install Lain as a hardened systemd service, and use standard DNS `53`, HTTP `80`, and HTTPS `443` ports. See [`deploy/proxmox`](deploy/proxmox/README.md) for the one-command installer, Cloudflare credential import, updates, and recovery.
 
+### Ubuntu host
+
+On a bare Ubuntu 22.04/24.04 host, a single reviewed command installs the same hardened systemd setup with a versioned release layout:
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Dragonshorn-Studios/lain/<release>/deploy/ubuntu/install.sh)" -- --dns-address 192.168.1.20
+```
+
+Updates are `sudo lainctl update` on a versioned install — checksum-verified release tarballs, laind stopped for a database backup, an atomic release switch, and automatic rollback when the health gate fails. See [`deploy/ubuntu`](deploy/ubuntu/README.md).
+
 ## Commands
 
 ```bash
@@ -49,6 +61,9 @@ pnpm test                # run tests
 pnpm lainctl status
 pnpm lainctl services
 pnpm lainctl reconcile
+pnpm lainctl update      # versioned installs only; requires root
+pnpm lainctl keys create home-ci
+pnpm lainctl auth login
 ```
 
 ### Secure host setup
@@ -118,6 +133,10 @@ pnpm --filter @lain/server start
 | `LAIN_RECONCILE_INTERVAL_MS` | `30000` | Reconciliation interval |
 | `LAIN_HEALTH_INTERVAL_MS` | `30000` | Health-check interval |
 | `LAIN_ADAPTER_MODE` | `mock` | Set to `live` to enable external mutations |
+| `LAIN_AUTH` | `session` | Set `off` to disable dashboard/API authentication (dev break-glass) |
+| `LAIN_TRUSTED_ORIGINS` | empty | Comma-separated origins allowed to call the API cross-origin |
+| `LAIN_ALLOW_UNSAFE_LIVE` | empty | Exact phrase required to run live mode with authentication disabled |
+| `LAIN_API_KEY` | empty | API key for `lainctl` and scripts (used by the CLI, not laind) |
 | `CLOUDFLARE_API_TOKEN` | empty | Scoped API token for DNS and Tunnel changes |
 | `CLOUDFLARE_ZONE_ID` | empty | Zone containing managed hostnames |
 | `CLOUDFLARE_ACCOUNT_ID` | empty | Account containing the Tunnel |
@@ -165,9 +184,35 @@ apps/cli      lainctl
 apps/agent    lain-agent stub
 packages/shared  shared domain and API types
 docs/systemd  deployment examples
+docs/RELEASING.md  release tags and checksums
 deploy/proxmox  unprivileged Proxmox LXC bootstrap
+scripts  CI guard scripts
 ```
 
 ## Security notes
 
-The MVP has no authentication. Bind the API to a trusted network, place it behind an authenticated gateway, and do not expose it directly to the internet. The dashboard intentionally cannot install packages, control systemd, or receive secrets. Keep `.env`, credential source files, and the certificate directory private. Use a least-privilege Cloudflare token.
+The full threat model and vulnerability reporting live in [SECURITY.md](SECURITY.md).
+
+Access control is single-admin: the dashboard uses an admin password with server-side session cookies, and machines (lainctl, scripts, CI) use API keys. Both are managed after installation.
+
+- **First-run setup**: on first open, the dashboard asks you to create the admin password. Complete it immediately — whoever sets the password first owns the dashboard. The password is submitted over HTTP(S) at setup and login, and only a scrypt hash is ever stored server-side.
+- **API keys**: create and revoke keys on the dashboard's *API keys* page or with `lainctl keys`. Keys authenticate every management endpoint (everything except the deliberately open health and auth handshake endpoints), are shown once at creation, and are stored only as SHA-256 hashes. Roll a key by creating a replacement and revoking the old one.
+- **Distribution**: export `LAIN_API_KEY` on headless servers and CI; on desktops, `lainctl auth login` prompts once and stores a dedicated key in the OS keychain. The admin password is never accepted through environment variables, arguments, or the keyring.
+- **Sessions**: survive restarts, expire after seven days, and are invalidated when the password changes. Login locks an IP for 15 minutes after 5 failed attempts (in memory; restarting laind clears it).
+- **Recovery**: forgot the password? Stop laind, clear the stored hash and the sessions, and restart — the dashboard returns to first-run setup and every existing session is discarded:
+
+  ```bash
+  sudo systemctl stop laind
+  sudo apt install sqlite3
+  sudo sqlite3 /var/lib/lain/lain.db "DELETE FROM auth_credentials; DELETE FROM auth_sessions;"
+  sudo systemctl start laind
+  ```
+
+- **Cross-origin**: the API is same-origin by default; arbitrary origins are rejected, and `LAIN_TRUSTED_ORIGINS` allows explicit exceptions. State-changing requests made with a session cookie must originate from the dashboard's own origin; API keys are exempt (they are not ambient credentials, so CSRF does not apply to them).
+- **Break-glass**: `LAIN_AUTH=off` disables authentication entirely. It is refused in live adapter mode unless `LAIN_ALLOW_UNSAFE_LIVE=i-understand-the-dashboard-is-unauthenticated` is set, and it logs a loud warning in mock mode.
+- **Topology**: keep the dashboard and API on your trusted LAN — never port-forward or expose them directly to the internet. Cloudflare Tunnel ingress is for the services Lain proxies, not for laind itself.
+- **Least privilege**: use a Cloudflare token scoped to DNS edit and Tunnel edit only; keep `.env`, credential source files, the database, and the certificate directory private.
+
+## License
+
+[MIT](LICENSE)

@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+export type AuthMode = "session" | "off";
+
+export const UNSAFE_LIVE_ACKNOWLEDGEMENT = "i-understand-the-dashboard-is-unauthenticated";
+
 export interface Config {
   host: string;
   port: number;
@@ -16,6 +20,9 @@ export interface Config {
   reconcileIntervalMs: number;
   healthIntervalMs: number;
   adapterMode: "mock" | "live";
+  authMode: AuthMode;
+  allowUnsafeLive: boolean;
+  trustedOrigins: string[];
   cloudflare: {
     apiToken?: string;
     zoneId?: string;
@@ -36,7 +43,7 @@ function credential(env: NodeJS.ProcessEnv, name: string, fallback?: string): st
 }
 
 export function loadConfig(env = process.env): Config {
-  return {
+  const config: Config = {
     host: env.LAIN_HOST ?? "0.0.0.0",
     port: integer(env.LAIN_PORT, 3100),
     publicUrl: env.LAIN_PUBLIC_URL ?? "http://localhost:3100",
@@ -51,6 +58,9 @@ export function loadConfig(env = process.env): Config {
     reconcileIntervalMs: integer(env.LAIN_RECONCILE_INTERVAL_MS, 30_000),
     healthIntervalMs: integer(env.LAIN_HEALTH_INTERVAL_MS, 30_000),
     adapterMode: env.LAIN_ADAPTER_MODE === "live" ? "live" : "mock",
+    authMode: env.LAIN_AUTH === "off" ? "off" : "session",
+    allowUnsafeLive: env.LAIN_ALLOW_UNSAFE_LIVE === UNSAFE_LIVE_ACKNOWLEDGEMENT,
+    trustedOrigins: parseTrustedOrigins(env.LAIN_TRUSTED_ORIGINS),
     cloudflare: {
       apiToken: credential(env, "cloudflare-api-token", env.CLOUDFLARE_API_TOKEN),
       zoneId: env.CLOUDFLARE_ZONE_ID,
@@ -60,4 +70,24 @@ export function loadConfig(env = process.env): Config {
     },
     acmeEmail: env.ACME_EMAIL
   };
+  assertSafeAuthCombination(config);
+  return config;
+}
+
+function assertSafeAuthCombination(config: Config): void {
+  if (config.authMode !== "off" || config.adapterMode !== "live" || config.allowUnsafeLive) return;
+  throw new Error(
+    "Refusing to start: live adapters with authentication disabled would let anyone who can reach laind " +
+    "change the registry and trigger external Cloudflare and Let's Encrypt mutations. " +
+    `Re-enable authentication (remove LAIN_AUTH=off) or set LAIN_ALLOW_UNSAFE_LIVE=${UNSAFE_LIVE_ACKNOWLEDGEMENT} to accept the risk explicitly.`
+  );
+}
+
+// Parses to URL origins so trailing slashes, paths, and casing can never
+// silently fail to match an Origin header later.
+function parseTrustedOrigins(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+    try { return new URL(entry).origin; }
+    catch { throw new Error(`Invalid LAIN_TRUSTED_ORIGINS entry "${entry}": expected an absolute origin such as https://host.example`); }
+  });
 }

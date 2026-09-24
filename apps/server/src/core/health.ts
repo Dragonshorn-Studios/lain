@@ -2,7 +2,7 @@ import { ServiceRepository } from "../services/repository.js";
 
 export class HealthChecker {
   private running = false;
-  constructor(private readonly repository: ServiceRepository) {}
+  constructor(private readonly repository: ServiceRepository, private readonly redact: (message: string) => string = (message) => message) {}
   async checkAll(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -18,7 +18,7 @@ export class HealthChecker {
       const response = await fetch(`${service.targetProtocol}://${service.targetHost}:${service.targetPort}/`, { method: "HEAD", redirect: "manual", signal: controller.signal });
       this.repository.setHealth(service.id, response.status < 500, `HTTP ${response.status}`);
     } catch (error) {
-      this.repository.setHealth(service.id, false, error instanceof Error ? error.message : "Health check failed");
+      this.repository.setHealth(service.id, false, this.redact(error instanceof Error ? error.message : "Health check failed"));
     } finally { clearTimeout(timeout); }
   }
 }
